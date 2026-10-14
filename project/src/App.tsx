@@ -1,94 +1,108 @@
 import { useState } from 'react';
-import { LayoutDashboard, Users, Building2, TrendingUp, HeartPulse } from 'lucide-react';
+import {
+  Building2,
+  HeartPulse,
+  LayoutDashboard,
+  TrendingUp,
+  Users,
+} from 'lucide-react';
+import { DashboardDataProvider } from '@/data/DashboardDataProvider';
+import { useDashboardData } from '@/data/useDashboardData';
 import { MainDashboard } from '@/components/tabs/MainDashboard';
 import { ElderlyPopulationMap } from '@/components/tabs/ElderlyPopulationMap';
 import { MedicalFacilitiesMap } from '@/components/tabs/MedicalFacilitiesMap';
 import { ClusterAnalysis } from '@/components/tabs/ClusterAnalysis';
-
 type TabId = 'dashboard' | 'population' | 'facilities' | 'clusters';
-
-interface TabDef {
-  id: TabId;
-  label: string;
-  icon: typeof LayoutDashboard;
-}
-
-const TABS: TabDef[] = [
-  { id: 'dashboard', label: '메인 대시보드', icon: LayoutDashboard },
-  { id: 'population', label: '고령인구 분포', icon: Users },
-  { id: 'facilities', label: '의료시설 분포', icon: Building2 },
-  { id: 'clusters', label: '위험등급 분석', icon: TrendingUp },
+const TABS = [
+  { id: 'dashboard' as const, label: '종합 현황', icon: LayoutDashboard },
+  { id: 'population' as const, label: '고령인구 변화', icon: Users },
+  { id: 'facilities' as const, label: '의료기관·접근성', icon: Building2 },
+  { id: 'clusters' as const, label: '공간군집·정책', icon: TrendingUp },
 ];
-
-function App() {
+function DashboardShell() {
+  const { validation } = useDashboardData();
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      <header className="sticky top-0 z-[1000] bg-slate-950/80 backdrop-blur-xl border-b border-slate-800">
-        <div className="max-w-[1600px] mx-auto px-4 lg:px-6">
-          <div className="flex items-center justify-between py-3">
+    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
+      {' '}
+      <header className="sticky top-0 z-[1000] border-b border-slate-800 bg-slate-50 ">
+        {' '}
+        <div className="mx-auto max-w-[1600px] px-4 lg:px-6">
+          {' '}
+          <div className="flex items-center justify-between gap-4 py-3">
+            {' '}
             <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-700">
-                <HeartPulse size={22} className="text-white" />
-              </div>
+              {' '}
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-red-500 to-red-700">
+                {' '}
+                <HeartPulse size={22} className="text-white" />{' '}
+              </div>{' '}
               <div>
-                <h1 className="text-base lg:text-lg font-bold leading-tight">
-                  인천광역시 고령화 인구 및 의료취약성 분석
-                </h1>
-                <p className="text-[11px] text-slate-500 leading-tight">
-                  Incheon Metropolitan City · Aging Population & Medical Vulnerability Dashboard
-                </p>
-              </div>
-            </div>
-            <div className="hidden lg:flex items-center gap-2 text-xs text-slate-500">
-              <span className="px-2 py-1 rounded-md bg-slate-800/50 border border-slate-700/30">
-                151개 행정동
-              </span>
-              <span className="px-2 py-1 rounded-md bg-slate-800/50 border border-slate-700/30">
-                2SFCA + 위험등급
-              </span>
-              <span className="px-2 py-1 rounded-md bg-slate-800/50 border border-slate-700/30">
-                2020-2026 시계열
-              </span>
-            </div>
-          </div>
-
-          <nav className="flex items-center gap-1 overflow-x-auto scrollbar-thin -mb-px">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
+                {' '}
+                <h1 className="text-base font-bold leading-tight lg:text-lg">
+                  {' '}
+                  인천광역시 고령인구·의료취약성 분석{' '}
+                </h1>{' '}
+                <p className="text-[11px] leading-tight text-slate-500">
+                  {' '}
+                  행정동별 제공 자료 기반 현황 및 2031 시나리오{' '}
+                </p>{' '}
+              </div>{' '}
+            </div>{' '}
+            <div className="hidden items-center gap-2 text-xs text-slate-400 lg:flex">
+              {' '}
+              <span className="rounded-md border border-slate-200 bg-slate-100 px-2 py-1">
+                {' '}
+                행정동 {validation.currentRowCount}곳{' '}
+              </span>{' '}
+              <span className="rounded-md border border-slate-200 bg-slate-100 px-2 py-1">
+                {' '}
+                의료기관 점 {validation.facilityFeatureCount}곳{' '}
+              </span>{' '}
+              <span className="rounded-md border border-slate-200 bg-slate-100 px-2 py-1">
+                {' '}
+                2016 · 2021 · 2026 · 2031{' '}
+              </span>{' '}
+            </div>{' '}
+          </div>{' '}
+          <nav className="-mb-px flex gap-1 overflow-x-auto scrollbar-thin">
+            {' '}
+            {TABS.map(({ id, label, icon: Icon }) => {
+              const isActive = activeTab === id;
               return (
                 <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
-                    isActive
-                      ? 'text-white border-red-500 tab-active-indicator'
-                      : 'text-slate-400 border-transparent hover:text-slate-200 hover:border-slate-600'
-                  }`}
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-all ${isActive ? 'tab-active-indicator border-red-500 text-white' : 'border-transparent text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}
                 >
-                  <Icon size={16} />
-                  <span>{tab.label}</span>
+                  {' '}
+                  <Icon size={16} /> <span>{label}</span>{' '}
                 </button>
               );
-            })}
-          </nav>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6">
-        {activeTab === 'dashboard' && <MainDashboard />}
-        {activeTab === 'population' && <ElderlyPopulationMap />}
-        {activeTab === 'facilities' && <MedicalFacilitiesMap />}
-        {activeTab === 'clusters' && <ClusterAnalysis />}
-      </main>
-
-      <footer className="py-3 border-t border-slate-800/50 text-center text-[11px] text-slate-600">
-        데이터 출처: KOSTAT 2018 행정구역 경계 | 인천광역시 · Incheon Metropolitan City
-      </footer>
+            })}{' '}
+          </nav>{' '}
+        </div>{' '}
+      </header>{' '}
+      <main className="mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6">
+        {' '}
+        {activeTab === 'dashboard' && <MainDashboard />}{' '}
+        {activeTab === 'population' && <ElderlyPopulationMap />}{' '}
+        {activeTab === 'facilities' && <MedicalFacilitiesMap />}{' '}
+        {activeTab === 'clusters' && <ClusterAnalysis />}{' '}
+      </main>{' '}
+      <footer className="border-t border-slate-200 px-4 py-3 text-center text-[11px] text-slate-500">
+        {' '}
+        기준 인구: 프로젝트 표기 2026년 6월 / 경계: 제공 파일 2025년 6월 30일 /
+        미래: 2031 시나리오{' '}
+      </footer>{' '}
     </div>
   );
 }
-
-export default App;
+export default function App() {
+  return (
+    <DashboardDataProvider>
+      {' '}
+      <DashboardShell />{' '}
+    </DashboardDataProvider>
+  );
+}
