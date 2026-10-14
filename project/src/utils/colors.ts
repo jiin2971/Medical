@@ -1,57 +1,45 @@
-import type { RiskGrade } from '@/types/dashboard';
-import { RISK_GRADE_INFO } from '@/types/dashboard';
-
-export function riskGradeColor(grade: RiskGrade, opacity = 0.7): string {
-  const c = RISK_GRADE_INFO[grade].color;
-  return hexToRgba(c, opacity);
+import type { VulnerabilityValue } from '@/types/dashboard';
+import { VULNERABILITY_INFO } from '@/types/dashboard';
+export function vulnerabilityColor(value: string | null | undefined): string {
+  return VULNERABILITY_INFO[classification(value)].color;
 }
-
-export function riskGradeFromScore(score: number): RiskGrade {
-  if (score >= 70) return 'high';
-  if (score >= 50) return 'mediumHigh';
-  if (score >= 30) return 'moderate';
-  return 'safe';
+export function classification(
+  value: string | null | undefined,
+): VulnerabilityValue {
+  if (value === '확정' || value === '경계' || value === '비취약') return value;
+  return 'missing';
 }
-
-export function vulnerabilityColor(score: number): string {
-  const grade = riskGradeFromScore(score);
-  return RISK_GRADE_INFO[grade].color;
+export function populationColor(
+  value: number | null,
+  minimum: number,
+  maximum: number,
+): string {
+  return numericColor(value, minimum, maximum, [219, 234, 254], [30, 64, 175]);
 }
-
-export function vulnerabilityFillColor(score: number, opacity = 0.7): string {
-  const grade = riskGradeFromScore(score);
-  return riskGradeColor(grade, opacity);
+export function metricColor(
+  value: number | null,
+  minimum: number,
+  maximum: number,
+): string {
+  return numericColor(value, minimum, maximum, [224, 242, 254], [14, 165, 233]);
 }
-
-export function populationColor(rate: number): string {
-  const clamped = Math.max(0, Math.min(50, rate));
-  const t = clamped / 50;
-
-  const startR = 219, startG = 234, startB = 254;
-  const endR = 30, endG = 64, endB = 175;
-
-  const r = Math.round(startR + (endR - startR) * t);
-  const g = Math.round(startG + (endG - startG) * t);
-  const b = Math.round(startB + (endB - startB) * t);
-
-  return `rgba(${r}, ${g}, ${b}, 0.7)`;
+export function numericColor(
+  value: number | null,
+  minimum: number,
+  maximum: number,
+  start: [number, number, number],
+  end: [number, number, number],
+): string {
+  if (value === null || !Number.isFinite(value)) return '#CBD5E1';
+  const span = maximum - minimum;
+  const ratio =
+    span > 0 ? Math.max(0, Math.min(1, (value - minimum) / span)) : 0.5;
+  const channel = start.map((component, index) =>
+    Math.round(component + (end[index] - component) * ratio),
+  );
+  return `rgb(${channel[0]}, ${channel[1]}, ${channel[2]})`;
 }
-
-export function facilityColor(count: number, max: number): string {
-  const t = max > 0 ? Math.min(1, count / max) : 0;
-  const startR = 224, startG = 242, startB = 254;
-  const endR = 14, endG = 165, endB = 233;
-
-  const r = Math.round(startR + (endR - startR) * t);
-  const g = Math.round(startG + (endG - startG) * t);
-  const b = Math.round(startB + (endB - startB) * t);
-
-  return `rgba(${r}, ${g}, ${b}, 0.7)`;
-}
-
-function hexToRgba(hex: string, opacity: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+export function facilitiesCountColor(count: number, maximum: number): string {
+  const ratio = maximum > 0 ? Math.max(0, Math.min(1, count / maximum)) : 0;
+  return numericColor(ratio, 0, 1, [224, 242, 254], [3, 105, 161]);
 }

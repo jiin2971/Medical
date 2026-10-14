@@ -1,209 +1,331 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { GeoJSON, Tooltip as LeafletTooltip } from 'react-leaflet';
-import type { GeoJSON as LeafletGeoJSON } from 'leaflet';
+import { useMemo, useState } from 'react';
+import { CircleMarker, GeoJSON, Popup } from 'react-leaflet';
+import { Building2, Search, Stethoscope } from 'lucide-react';
 import { IncheonMap } from '@/components/map/IncheonMap';
 import { GradientLegend } from '@/components/map/GradientLegend';
-import { TimeSlider } from '@/components/map/TimeSlider';
-import { SearchBar } from '@/components/map/SearchBar';
+import { MapNavigation } from '@/components/map/MapNavigation';
 import { DongDetailModal } from '@/components/DongDetailModal';
-import { fetchIncheonGeoJSON, getFeatureCentroid } from '@/data/geoJsonLoader';
-import { getMetricsMapForYear, getMetricsForYear } from '@/data/mockData';
-import { YEAR_RANGE } from '@/types/dashboard';
-import type { GeoJSONCollection, DongMetrics } from '@/types/dashboard';
-import { facilityColor } from '@/utils/colors';
-import { Building2, Stethoscope, Pill, Cross } from 'lucide-react';
-
-type FacilityType = 'majorHospitals' | 'smallClinics' | 'pharmacies' | 'emergencyRoomCount';
-
-const FACILITY_INFO: Record<FacilityType, { label: string; icon: typeof Building2; color: string }> = {
-  majorHospitals: { label: '대형병원', icon: Building2, color: '#ef4444' },
-  smallClinics: { label: '소형의원', icon: Stethoscope, color: '#0ea5e9' },
-  pharmacies: { label: '약국', icon: Pill, color: '#22c55e' },
-  emergencyRoomCount: { label: '응급실', icon: Cross, color: '#f97316' },
-};
-
+import { useDashboardData } from '@/data/useDashboardData';
+import type { DongRecord } from '@/types/dashboard';
+import { ACC_INDEX_HELP } from '@/types/dashboard';
+import { facilitiesCountColor, metricColor } from '@/utils/colors';
+import { formatNumber } from '@/utils/format';
+type FacilityMetric =
+  'doc_S_in_dong' | 'doc_per_1k_eld' | 'acc_600' | 'facilityCount';
+const METRICS: Array<{ value: FacilityMetric; label: string; help: string }> = [
+  {
+    value: 'doc_S_in_dong',
+    label: '의사 공급량 S 합계',
+    help: '적격 만성질환 의사 공급량 S의 합계입니다. 시설 수와 다릅니다.',
+  },
+  {
+    value: 'doc_per_1k_eld',
+    label: '고령인구 1,000명당 의사 공급',
+    help: 'doc_per_1k_eld 원자료 값입니다.',
+  },
+  {
+    value: 'acc_600',
+    label: '600m 2SFCA 접근성 지수',
+    help: '2SFCA 접근성 지수(원자료 단위)입니다. 값이 클수록 접근성이 더 좋습니다.',
+  },
+  {
+    value: 'facilityCount',
+    label: '분석 적격 의료기관 점 수',
+    help: 'GeoJSON의 행정동 연결 시설 Point 개수입니다. S 공급량과 다릅니다.',
+  },
+];
 export function MedicalFacilitiesMap() {
-  const [geoData, setGeoData] = useState<GeoJSONCollection | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [year, setYear] = useState<number>(YEAR_RANGE[0]);
-  const [activeFacility, setActiveFacility] = useState<FacilityType>('majorHospitals');
-  const [selectedDong, setSelectedDong] = useState<DongMetrics | null>(null);
-  const [highlightedCode, setHighlightedCode] = useState<string | null>(null);
-  const geoJsonRef = useRef<LeafletGeoJSON | null>(null);
-
-  useEffect(() => {
-    fetchIncheonGeoJSON().then((data) => {
-      setGeoData(data);
-      setLoading(false);
-    });
-  }, []);
-
-  const dongMetrics = getMetricsForYear(year);
-  const metricsMap = getMetricsMapForYear(year);
-  const maxCount = Math.max(...dongMetrics.map((d) => d[activeFacility]));
-
-  const styleFeature = useCallback(
-    (feature: { properties: { code: string } }) => {
-      const metrics = metricsMap[feature.properties.code];
-      const count = metrics?.[activeFacility] ?? 0;
-      const isHighlighted = highlightedCode === feature.properties.code;
-      return {
-        fillColor: facilityColor(count, maxCount),
-        weight: isHighlighted ? 4 : 0,
-        opacity: isHighlighted ? 1 : 0,
-        color: isHighlighted ? '#ffffff' : 'transparent',
-        fillOpacity: 0.75,
-      };
-    },
-    [metricsMap, maxCount, activeFacility, highlightedCode],
+  const { records, boundaries, facilities, byCode } = useDashboardData();
+  const [metric, setMetric] = useState<FacilityMetric>('doc_S_in_dong');
+  const [selectedDong, setSelectedDong] = useState<DongRecord | null>(null);
+  const [facilityQuery, setFacilityQuery] = useState('');
+  const [selectedTypes, setSelectedTypes] = useState<Set<string>>(
+    () => new Set(['의원', '병원', '종합병원']),
   );
-
-  const onEachFeature = (
-    feature: { properties: { code: string; name: string } },
-    layer: LeafletGeoJSON,
-  ) => {
-    const metrics = metricsMap[feature.properties.code];
-    if (!metrics) return;
-
-    const totalFac = metrics.majorHospitals + metrics.smallClinics + metrics.pharmacies;
-
-    layer.bindTooltip(
-      `<div style="min-width: 190px;">
-        <div style="font-weight: 700; font-size: 13px; margin-bottom: 6px; color: #f8fafc;">${metrics.name}</div>
-        <div style="display: grid; grid-template-columns: 1fr auto; gap: 3px 12px; font-size: 11px; color: #cbd5e1;">
-          <span>대형병원</span><span style="font-weight: 600; color: #fca5a5; text-align: right;">${metrics.majorHospitals}개</span>
-          <span>소형의원</span><span style="font-weight: 600; color: #7dd3fc; text-align: right;">${metrics.smallClinics}개</span>
-          <span>약국</span><span style="font-weight: 600; color: #86efac; text-align: right;">${metrics.pharmacies}개</span>
-          <span>응급실</span><span style="font-weight: 600; color: #fdba74; text-align: right;">${metrics.emergencyRoomCount}개</span>
-          <span style="border-top: 1px solid #475569; padding-top: 3px; margin-top: 2px;">의료시설 합계</span>
-          <span style="font-weight: 700; color: #f1f5f9; text-align: right; border-top: 1px solid #475569; padding-top: 3px; margin-top: 2px;">${totalFac}개</span>
-        </div>
-      </div>`,
-      { sticky: true, className: 'dong-tooltip', direction: 'top' },
-    );
-
-    layer.on({
-      click: () => setSelectedDong(metrics),
-      mouseover: (e: { target: LeafletGeoJSON }) => {
-        e.target.setStyle({ weight: 3, opacity: 1, color: '#ffffff' });
-      },
-      mouseout: (e: { target: LeafletGeoJSON }) => {
-        e.target.setStyle(styleFeature(feature));
-      },
-    });
-  };
-
-  const handleSearch = (code: string) => {
-    setHighlightedCode(code);
-    const m = metricsMap[code];
-    if (m) setSelectedDong(m);
-  };
-
+  const facilityTypes = [
+    ...new Set(facilities.features.map((feature) => feature.properties.type)),
+  ].sort();
+  const query = facilityQuery.trim().toLocaleLowerCase('ko-KR');
+  const visibleFacilities = facilities.features.filter((feature) => {
+    const matchesType = selectedTypes.has(feature.properties.type);
+    const matchesName =
+      !query ||
+      feature.properties.name.toLocaleLowerCase('ko-KR').includes(query);
+    return matchesType && matchesName;
+  });
+  const facilityCountByCode = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const feature of visibleFacilities) {
+      const { adm_cd: code, admin_join_ok: joined } = feature.properties;
+      if (joined !== 1 || !code) continue;
+      counts[code] = (counts[code] ?? 0) + 1;
+    }
+    return counts;
+  }, [visibleFacilities]);
+  const metricValues = records
+    .map((record) =>
+      metric === 'facilityCount'
+        ? (facilityCountByCode[record.adm_cd] ?? 0)
+        : record[metric],
+    )
+    .filter((value): value is number => value !== null);
+  const minimum = metric === 'facilityCount' ? 0 : Math.min(...metricValues);
+  const maximum = Math.max(...metricValues);
+  const totalSupply = visibleFacilities.reduce(
+    (sum, feature) => sum + (feature.properties.S ?? 0),
+    0,
+  );
+  const unmatchedCount = visibleFacilities.filter(
+    (feature) => feature.properties.admin_join_ok !== 1,
+  ).length;
+  const selectedMetric =
+    METRICS.find((item) => item.value === metric) ?? METRICS[0];
+  const selectArea = (code: string) => setSelectedDong(byCode[code] ?? null);
   return (
-    <div className="flex flex-col lg:flex-row gap-4 h-full">
-      <div className="flex-1 relative rounded-2xl overflow-hidden border border-slate-700/50 min-h-[550px]">
-        {loading ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
-            <div className="text-center">
-              <div className="w-10 h-10 border-[3px] border-sky-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-              <p className="text-sm text-slate-400">의료시설 데이터 로딩 중...</p>
-            </div>
-          </div>
-        ) : (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(310px,0.8fr)]">
+      {' '}
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4">
+        {' '}
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          {' '}
+          <div>
+            {' '}
+            <h2 className="text-base font-bold text-white">
+              2026 기준 분석 적격 의료기관과 접근성
+            </h2>{' '}
+            <p className="mt-1 text-xs text-slate-400">
+              시설 위치 697곳 · 모든 시설은 2026 분석 기준입니다.
+            </p>{' '}
+          </div>{' '}
+          <select
+            value={metric}
+            onChange={(event) =>
+              setMetric(event.target.value as FacilityMetric)
+            }
+            aria-label="지도 지표 선택"
+            className="max-w-64 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200"
+          >
+            {' '}
+            {METRICS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}{' '}
+          </select>{' '}
+        </div>{' '}
+        <div className="relative h-[680px] overflow-hidden rounded-xl border border-slate-200">
+          {' '}
           <IncheonMap>
-            {geoData && (
-              <GeoJSON
-                key={`${activeFacility}-${year}`}
-                ref={(ref) => {
-                  geoJsonRef.current = ref;
-                }}
-                data={geoData}
-                style={styleFeature}
-                onEachFeature={onEachFeature}
-              />
-            )}
-            {geoData &&
-              geoData.features.map((feature) => {
-                const metrics = metricsMap[feature.properties.code];
-                if (!metrics || metrics[activeFacility] === 0) return null;
-                const centroid = getFeatureCentroid(feature);
-                return (
-                  <LeafletTooltip
-                    key={`label-${feature.properties.code}`}
-                    position={centroid}
-                    permanent
-                    className="dong-label"
-                  >
-                    {String(metrics[activeFacility])}
-                  </LeafletTooltip>
-                );
-              })}
-          </IncheonMap>
-        )}
-
-        <div className="absolute top-3 left-3 z-[1000]">
-          <SearchBar onSelect={handleSearch} />
-        </div>
-
-        <div className="absolute bottom-3 left-3 z-[1000] w-56">
-          <TimeSlider year={year} onChange={setYear} />
-        </div>
-
-        <div className="absolute bottom-3 right-3 z-[1000] w-48">
-          <GradientLegend
-            title={`${FACILITY_INFO[activeFacility].label} 수`}
-            minLabel="0개"
-            maxLabel={`${maxCount}개`}
-            gradient="linear-gradient(90deg, #E0F2FE, #7DD3FC, #0EA5E9, #0284C7, #0C4A6E)"
-          />
-        </div>
-      </div>
-
-      <div className="lg:w-80 shrink-0 space-y-3">
-        <div className="bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-700/50 p-4">
-          <h3 className="text-sm font-semibold text-slate-300 mb-3">시설 유형 선택</h3>
-          <div className="space-y-2">
-            {(Object.keys(FACILITY_INFO) as FacilityType[]).map((key) => {
-              const info = FACILITY_INFO[key];
-              const Icon = info.icon;
+            {' '}
+            <GeoJSON
+              data={boundaries}
+              interactive
+              style={(feature) => {
+                const code = feature?.properties?.adm_cd;
+                const record =
+                  typeof code === 'string' ? byCode[code] : undefined;
+                const value =
+                  metric === 'facilityCount'
+                    ? typeof code === 'string'
+                      ? (facilityCountByCode[code] ?? 0)
+                      : 0
+                    : (record?.[metric] ?? null);
+                const fillColor =
+                  metric === 'facilityCount'
+                    ? facilitiesCountColor(value ?? 0, maximum)
+                    : metricColor(value, minimum, maximum);
+                return {
+                  fillColor,
+                  fillOpacity: 0.65,
+                  color: '#0f172a',
+                  weight: 0.55,
+                };
+              }}
+              onEachFeature={(feature, layer) => {
+                const code = feature.properties?.adm_cd;
+                const record =
+                  typeof code === 'string' ? byCode[code] : undefined;
+                if (!record) return;
+                layer.on('click', () => setSelectedDong(record));
+              }}
+            />{' '}
+            {visibleFacilities.map((feature) => {
+              const [longitude, latitude] = feature.geometry.coordinates;
+              const properties = feature.properties;
+              const isJoined = properties.admin_join_ok === 1;
               return (
-                <button
-                  key={key}
-                  onClick={() => setActiveFacility(key)}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                    activeFacility === key
-                      ? 'bg-slate-800 border-slate-600'
-                      : 'bg-slate-800/30 border-slate-700/30 hover:bg-slate-800/60'
-                  }`}
+                <CircleMarker
+                  key={properties.fac_id}
+                  center={[latitude, longitude]}
+                  radius={isJoined ? 3 : 6}
+                  pathOptions={{
+                    color: isJoined ? '#e0f2fe' : '#fbbf24',
+                    fillColor: isJoined ? '#0ea5e9' : '#f59e0b',
+                    fillOpacity: 0.9,
+                    weight: isJoined ? 1 : 2,
+                  }}
                 >
-                  <Icon size={18} style={{ color: info.color }} />
-                  <span className="text-sm text-slate-300 flex-1 text-left">{info.label}</span>
-                  <span className="text-xs font-bold text-white">
-                    {dongMetrics.reduce((s, d) => s + d[key], 0)}개
-                  </span>
-                </button>
+                  {' '}
+                  <Popup>
+                    {' '}
+                    <div className="min-w-48 space-y-1">
+                      {' '}
+                      <p className="font-bold">{properties.name}</p>{' '}
+                      <p>유형: {properties.type}</p>{' '}
+                      <p>의사 공급 S: {formatNumber(properties.S, 2)}</p>{' '}
+                      <p>주소: {properties.address ?? '자료 없음'}</p>{' '}
+                      <p>
+                        행정동 연결:{' '}
+                        {isJoined
+                          ? `${properties.adm_nm ?? '자료 없음'} (${properties.adm_cd ?? '코드 없음'})`
+                          : '행정동 미연결'}
+                      </p>{' '}
+                    </div>{' '}
+                  </Popup>{' '}
+                </CircleMarker>
               );
-            })}
-          </div>
-        </div>
-
-        <div className="bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-700/50 p-4">
-          <h3 className="text-sm font-semibold text-slate-300 mb-3">시설 수 상위 지역</h3>
-          <div className="space-y-1.5">
-            {[...dongMetrics]
-              .sort((a, b) => b[activeFacility] - a[activeFacility])
-              .slice(0, 8)
-              .map((d, i) => (
-                <div key={d.code} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400 truncate">{i + 1}. {d.name}</span>
-                  <span className="font-bold text-sky-400 ml-2">{d[activeFacility]}개</span>
-                </div>
-              ))}
-          </div>
-        </div>
-      </div>
-
-      <DongDetailModal metrics={selectedDong} onClose={() => setSelectedDong(null)} />
+            })}{' '}
+            <MapNavigation
+              boundaries={boundaries}
+              onSelectCode={selectArea}
+            />{' '}
+          </IncheonMap>{' '}
+          <div className="absolute bottom-3 right-3 z-[900] w-56">
+            {' '}
+            <GradientLegend
+              title={selectedMetric.label}
+              minLabel={formatNumber(minimum, metric === 'acc_600' ? 4 : 0)}
+              maxLabel={formatNumber(maximum, metric === 'acc_600' ? 4 : 0)}
+              gradient="linear-gradient(90deg, #E0F2FE, #7DD3FC, #0EA5E9, #0284C7, #0C4A6E)"
+            />{' '}
+          </div>{' '}
+          <div className="absolute bottom-3 left-3 z-[900] rounded-lg border border-slate-700 bg-white px-3 py-2 text-[10px] text-slate-300">
+            {' '}
+            파란 점: 행정동 연결 · 노란 점: 행정동 미연결{' '}
+          </div>{' '}
+        </div>{' '}
+      </section>{' '}
+      <aside className="space-y-4">
+        {' '}
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          {' '}
+          <h3 className="text-sm font-bold text-white">
+            시설 종류·이름 검색
+          </h3>{' '}
+          <div className="mt-3 space-y-2">
+            {' '}
+            {facilityTypes.map((type) => (
+              <label
+                key={type}
+                className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-300"
+              >
+                {' '}
+                <input
+                  type="checkbox"
+                  checked={selectedTypes.has(type)}
+                  onChange={(event) => {
+                    setSelectedTypes((current) => {
+                      const next = new Set(current);
+                      if (event.target.checked) next.add(type);
+                      else next.delete(type);
+                      return next;
+                    });
+                  }}
+                  className="accent-sky-500"
+                />{' '}
+                <span className="flex-1">{type}</span>{' '}
+                <span className="text-slate-500">
+                  {
+                    facilities.features.filter(
+                      (feature) => feature.properties.type === type,
+                    ).length
+                  }
+                  곳
+                </span>{' '}
+              </label>
+            ))}{' '}
+          </div>{' '}
+          <label className="mt-3 flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-50 px-3 py-2">
+            {' '}
+            <Search size={15} className="text-slate-500" />{' '}
+            <input
+              value={facilityQuery}
+              onChange={(event) => setFacilityQuery(event.target.value)}
+              placeholder="의료기관 이름 검색"
+              className="w-full bg-transparent text-xs text-white outline-none placeholder:text-slate-500"
+            />{' '}
+          </label>{' '}
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {' '}
+            <StatCard
+              icon={<Building2 size={15} />}
+              label="현재 표시 점 수"
+              value={`${visibleFacilities.length}곳`}
+            />{' '}
+            <StatCard
+              icon={<Stethoscope size={15} />}
+              label="표시된 의사 공급 S"
+              value={formatNumber(totalSupply, 2)}
+            />{' '}
+          </div>{' '}
+          <p className="mt-3 text-[10px] leading-relaxed text-slate-500">
+            {' '}
+            697곳은 이번 분석에 적격으로 포함된 의료기관이며 인천의 모든
+            의료기관 목록은 아닙니다. 시설 점 수와 의사 공급 S 합계를
+            구분합니다.{' '}
+          </p>{' '}
+          {unmatchedCount > 0 && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[10px] text-amber-200">
+              {' '}
+              현재 필터 결과에서 행정동 미연결 {unmatchedCount}곳을 원래 좌표에
+              표시합니다.{' '}
+            </p>
+          )}{' '}
+        </section>{' '}
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          {' '}
+          <h3 className="text-sm font-bold text-white">
+            행정동 지표 설명
+          </h3>{' '}
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+            {selectedMetric.help}
+          </p>{' '}
+          {metric === 'acc_600' && (
+            <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+              {ACC_INDEX_HELP}
+            </p>
+          )}{' '}
+          <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-400">
+            {' '}
+            지도에 표시된 시설 위치는 2026 기준입니다. 이를 과거·미래의
+            관측값으로 해석하지 않습니다.{' '}
+          </p>{' '}
+        </section>{' '}
+      </aside>{' '}
+      <DongDetailModal
+        metrics={selectedDong}
+        onClose={() => setSelectedDong(null)}
+      />{' '}
+    </div>
+  );
+}
+function StatCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-50 p-3">
+      {' '}
+      <div className="flex items-center gap-1.5 text-sky-400">
+        {icon}
+        <span className="text-[10px] text-slate-400">{label}</span>
+      </div>{' '}
+      <p className="mt-1 text-sm font-bold text-white">{value}</p>{' '}
     </div>
   );
 }

@@ -1,97 +1,88 @@
-import type { GeoJSONCollection, GeoJSONFeature } from '@/types/dashboard';
-
-const GEOJSON_URL =
-  'https://raw.githubusercontent.com/southkorea/southkorea-maps/master/kostat/2018/json/skorea-submunicipalities-2018-geo.json';
-
-const INCHEON_CODE_PREFIX = '23';
-
-export async function fetchIncheonGeoJSON(): Promise<GeoJSONCollection> {
-  try {
-    const res = await fetch(GEOJSON_URL);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data: GeoJSONCollection = await res.json();
-    const incheonFeatures = data.features.filter(
-      (f) => f.properties.code.startsWith(INCHEON_CODE_PREFIX)
+import pointOnFeature from '@turf/point-on-feature';
+import type { BoundaryCollection, BoundaryFeature } from '@/types/dashboard';
+const EXPECTED_BOUNDARY_COUNT = 156;
+const INCHEON_WGS84_BOUNDS = {
+  minLongitude: 124,
+  maxLongitude: 127.5,
+  minLatitude: 36.8,
+  maxLatitude: 38,
+} as const;
+export async function fetchIncheonGeoJSON(): Promise<BoundaryCollection> {
+  const response = await fetch('/data/dong_boundary.geojson');
+  if (!response.ok)
+    throw new Error(`/data/dong_boundary.geojson: HTTP ${response.status}`);
+  const data: unknown = await response.json();
+  assertIncheonBoundaryCollection(data);
+  return data;
+}
+export function getFeatureCentroid(feature: BoundaryFeature): [number, number] {
+  const point = pointOnFeature(feature);
+  const [longitude, latitude] = point.geometry.coordinates;
+  return [latitude, longitude];
+}
+function assertIncheonBoundaryCollection(
+  data: unknown,
+): asserts data is BoundaryCollection {
+  if (!data || typeof data !== 'object') {
+    throw new Error(
+      '/data/dong_boundary.geojson: 경계 GeoJSON 구조가 올바르지 않습니다.',
     );
-    return { type: 'FeatureCollection', features: incheonFeatures };
-  } catch (err) {
-    console.error('Failed to fetch Incheon GeoJSON, using fallback:', err);
-    return getFallbackGeoJSON();
   }
-}
-
-export function getFallbackGeoJSON(): GeoJSONCollection {
-  const fallbackDongs: { code: string; name: string; nameEng: string }[] = [
-    { code: '2301052', name: '연안동', nameEng: 'Yeonandong' },
-    { code: '2301053', name: '신포동', nameEng: 'Sinpo-dong' },
-    { code: '2301054', name: '신흥동', nameEng: 'Sinheung-dong' },
-    { code: '2302051', name: '만석동', nameEng: 'Manseok-dong' },
-    { code: '2304053', name: '연수1동', nameEng: 'Yeonsu 1-dong' },
-    { code: '2304064', name: '송도1동', nameEng: 'Songdo1-dong' },
-    { code: '2305051', name: '구월1동', nameEng: 'Guwol 1-dong' },
-    { code: '2306051', name: '부평1동', nameEng: 'Bupyeong 1-dong' },
-    { code: '2307051', name: '효성1동', nameEng: 'Hyoseong 1-dong' },
-    { code: '2308051', name: '검암경서동', nameEng: 'Geomamgyeongseodong' },
-  ];
-
-  const features: GeoJSONFeature[] = fallbackDongs.map((d) => ({
-    type: 'Feature',
-    geometry: {
-      type: 'Polygon',
-      coordinates: generateFallbackPolygon(d.code),
-    },
-    properties: {
-      name: d.name,
-      base_year: '2018',
-      name_eng: d.nameEng,
-      code: d.code,
-    },
-  }));
-
-  return { type: 'FeatureCollection', features };
-}
-
-function generateFallbackPolygon(code: string): number[][][] {
-  const seed = parseInt(code.slice(-4)) || 1;
-  const baseLng = 126.7052 + (seed % 10) * 0.03 - 0.15;
-  const baseLat = 37.4563 + (seed % 7) * 0.03 - 0.1;
-  const size = 0.015;
-  return [[
-    [baseLng, baseLat],
-    [baseLng + size, baseLat],
-    [baseLng + size, baseLat + size],
-    [baseLng, baseLat + size],
-    [baseLng, baseLat],
-  ]];
-}
-
-export function getFeatureCentroid(feature: GeoJSONFeature): [number, number] {
-  const geom = feature.geometry;
-  let allCoords: number[][] = [];
-
-  if (geom.type === 'MultiPolygon') {
-    const coords = geom.coordinates as number[][][][];
-    let largest = coords[0][0];
-    let maxLen = 0;
-    for (const polygon of coords) {
-      if (polygon[0].length > maxLen) {
-        maxLen = polygon[0].length;
-        largest = polygon[0];
-      }
+  const collection = data as { type?: unknown; features?: unknown };
+  if (
+    collection.type !== 'FeatureCollection' ||
+    !Array.isArray(collection.features)
+  ) {
+    throw new Error(
+      '/data/dong_boundary.geojson: 경계 GeoJSON 구조가 올바르지 않습니다.',
+    );
+  }
+  if (collection.features.length !== EXPECTED_BOUNDARY_COUNT) {
+    throw new Error(
+      `/data/dong_boundary.geojson: 인천 행정동 경계는 ${EXPECTED_BOUNDARY_COUNT}개여야 합니다 (현재 ${collection.features.length}개).`,
+    );
+  }
+  for (const feature of collection.features) {
+    if (!feature || typeof feature !== 'object') {
+      throw new Error(
+        '/data/dong_boundary.geojson: 경계 GeoJSON 구조가 올바르지 않습니다.',
+      );
     }
-    allCoords = largest;
-  } else if (geom.type === 'Polygon') {
-    const coords = geom.coordinates as number[][][];
-    allCoords = coords[0];
+    const candidate = feature as {
+      type?: unknown;
+      geometry?: { type?: unknown; coordinates?: unknown };
+      properties?: { adm_cd?: unknown; adm_nm?: unknown };
+    };
+    if (
+      candidate.type !== 'Feature' ||
+      (candidate.geometry?.type !== 'Polygon' &&
+        candidate.geometry?.type !== 'MultiPolygon') ||
+      typeof candidate.properties?.adm_cd !== 'string' ||
+      typeof candidate.properties.adm_nm !== 'string'
+    ) {
+      throw new Error(
+        '/data/dong_boundary.geojson: 경계 GeoJSON 구조가 올바르지 않습니다.',
+      );
+    }
+    if (!isIncheonPositionTree(candidate.geometry.coordinates)) {
+      throw new Error(
+        `/data/dong_boundary.geojson: 행정동 코드 ${candidate.properties.adm_cd}의 좌표가 인천 WGS84 범위를 벗어나거나 올바르지 않습니다. EPSG:4326 경도·위도 좌표를 사용해야 합니다 (경도 124.0°–127.5°, 위도 36.8°–38.0°).`,
+      );
+    }
   }
-
-  if (allCoords.length === 0) return [37.4563, 126.7052];
-
-  let latSum = 0;
-  let lngSum = 0;
-  for (const [lng, lat] of allCoords) {
-    latSum += lat;
-    lngSum += lng;
+}
+function isIncheonPositionTree(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  if (value.every((coordinate) => typeof coordinate === 'number')) {
+    const [longitude, latitude] = value as number[];
+    return (
+      value.length >= 2 &&
+      value.every(Number.isFinite) &&
+      longitude >= INCHEON_WGS84_BOUNDS.minLongitude &&
+      longitude <= INCHEON_WGS84_BOUNDS.maxLongitude &&
+      latitude >= INCHEON_WGS84_BOUNDS.minLatitude &&
+      latitude <= INCHEON_WGS84_BOUNDS.maxLatitude
+    );
   }
-  return [latSum / allCoords.length, lngSum / allCoords.length];
+  return value.every(isIncheonPositionTree);
 }
